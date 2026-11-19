@@ -1,0 +1,8 @@
+
+wp-data/
+db-data/
+
+# 自签名证书（含密钥，请勿提交），保留目录占位文件
+certs/*
+!certs/.gitkeep
+.env
