@@ -66,6 +66,15 @@ CERT_DAYS=825 ./generate-certs.sh
 docker compose up -d
 ```
 
+首次启动时会自动执行一次性服务 `wpcli`：按当前 WordPress 版本下载并安装简体中文语言包，并把站点语言设为 `zh_CN`。执行完该容器会以退出码 0 结束（`Exited (0)` 属正常，不影响站点）。
+
+```bash
+docker compose logs wpcli     # 查看语言包安装结果
+```
+
+> 如需其他语言，修改 [docker-compose.yml](docker-compose.yml) 中 `wpcli` 服务的 `zh_CN`（如 `zh_TW`、`ja`）后重新执行 `docker compose up -d wpcli`。
+> 若后续在后台切换了语言，WordPress 会在「更新 → 更新翻译」时自行维护 `wp-content/languages`。
+
 查看状态与日志：
 
 ```bash
