@@ -7,6 +7,8 @@
 ```
 .
 ├── docker-compose.yml      # 服务编排：db / wordpress / nginx
+├── Dockerfile              # 构建 WordPress 镜像并内置中文语言包
+├── .dockerignore           # 构建上下文排除项
 ├── .env.example            # 环境变量模板（提交到仓库）
 ├── .env                    # 本地环境变量（由 .env.example 复制而来，不提交）
 ├── .gitignore
@@ -29,6 +31,8 @@
 | `HTTP_PORT` | `80` | 宿主机 HTTP 端口（仅用于跳转到 HTTPS） |
 | `HTTPS_PORT` | `443` | 宿主机 HTTPS 端口 |
 | `SERVER_NAME` | `localhost` | 自签名证书的域名，运行 `generate-certs.sh` 时读取 |
+| `WORDPRESS_VERSION` | `7.1.5` | WordPress 基础镜像版本（构建镜像时使用） |
+| `WP_LANG` | `zh_CN` | 站点语言，语言包在构建镜像时内置（`zh_TW`、`ja` 等） |
 
 > `.env` 不提交到仓库，仅跟踪模板 `.env.example`。首次使用请先 `cp .env.example .env`，再修改其中的值。生产使用请务必修改数据库密码；如绑定域名，把 `SERVER_NAME` 改成你的域名。
 
@@ -60,20 +64,16 @@ cp .env.example .env
 CERT_DAYS=825 ./generate-certs.sh
 ```
 
-### 3. 启动服务
+### 3. 构建并启动服务
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
 
-首次启动时会自动执行一次性服务 `wpcli`：按当前 WordPress 版本下载并安装简体中文语言包，并把站点语言设为 `zh_CN`。执行完该容器会以退出码 0 结束（`Exited (0)` 属正常，不影响站点）。
+首次会基于根目录的 [Dockerfile](Dockerfile) 构建镜像：按 `WORDPRESS_VERSION` 拉取官方镜像，并在构建阶段把 `WP_LANG` 对应的语言包下载进 `/usr/src/wordpress/wp-content/languages`。构建上下文为项目根目录，已通过 `.dockerignore` 排除 `wp-data/`、`db-data/`、`certs/` 等。不修改官方 ENTRYPOINT——首次启动（`./wp-data` 为空）时官方 entrypoint 会把 `/usr/src/wordpress` 完整复制进数据卷，语言包随之生效并自动归属 `www-data`。
 
-```bash
-docker compose logs wpcli     # 查看语言包安装结果
-```
-
-> 如需其他语言，修改 [docker-compose.yml](docker-compose.yml) 中 `wpcli` 服务的 `zh_CN`（如 `zh_TW`、`ja`）后重新执行 `docker compose up -d wpcli`。
-> 若后续在后台切换了语言，WordPress 会在「更新 → 更新翻译」时自行维护 `wp-content/languages`。
+> 修改 Dockerfile 或更换 `WP_LANG` / `WORDPRESS_VERSION` 后，需要重新构建：`docker compose up -d --build`。
+> 升级 WordPress 版本：把 `.env` 里的 `WORDPRESS_VERSION` 改成新版本后重新构建，语言包会自动匹配新版本。
 
 查看状态与日志：
 
@@ -89,6 +89,26 @@ docker compose logs -f nginx
 由于是**自签名证书**，浏览器会提示“不安全/证书不受信任”，这是正常现象——点击“高级”→“继续访问”即可。消除警告的方法见下文。
 
 > HTTP `http://localhost` 会自动 301 跳转到 HTTPS。
+
+## 中文语言包（镜像内置）
+
+语言包不依赖运行时联网，而是固化在镜像里，且**不修改官方 ENTRYPOINT**：
+
+1. **构建阶段**：根目录的 [Dockerfile](Dockerfile) 读取镜像内 WordPress 版本，下载 `https://downloads.wordpress.org/translation/core/<版本>/<WP_LANG>.zip` 并解压到 `/usr/src/wordpress/wp-content/languages`（官方 entrypoint 的源目录）。
+2. **首次启动**：`./wp-data` 为空时，官方 entrypoint 自动把 `/usr/src/wordpress` 复制进数据卷（`--owner www-data`），语言包随之进入 `wp-content/languages`。
+3. **激活**：`WORDPRESS_CONFIG_EXTRA` 写入 `define('WPLANG', 'zh_CN')`（取自 `WP_LANG`）。
+
+> 官方镜像声明了 `VOLUME /var/www/html`，在其下直接 `COPY` 文件会被丢弃，且 bind mount 会遮蔽镜像内容——所以语言包必须放在 `/usr/src/wordpress`（官方 entrypoint 唯一会搬运的目录）。
+>
+> **已有数据卷不会自动补语言包**（官方只在首次初始化时复制）。若 `./wp-data` 初始化时镜像还没内置语言包，在宿主机手动补一次即可：
+>
+> ```bash
+> curl -fsSL -o /tmp/lang.zip "https://downloads.wordpress.org/translation/core/7.1.5/zh_CN.zip"
+> unzip -o /tmp/lang.zip -d wp-data/wp-content/languages
+> docker compose exec wordpress chown -R www-data:www-data /var/www/html/wp-content/languages
+> ```
+
+> 语言由 `WPLANG` 常量固定，后台「设置 → 常规 → 站点语言」切换不会生效。要换语言：改 `.env` 的 `WP_LANG`（如 `zh_TW`、`ja`）后执行 `docker compose up -d --build`（已有数据卷还需按上方方法手动替换语言文件）。
 
 ## 关于自签名证书
 
@@ -120,6 +140,7 @@ if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROT
     $_SERVER['HTTPS'] = 'on';
 }
 define('FORCE_SSL_ADMIN', true);
+define('WPLANG', 'zh_CN');
 ```
 
 这样可避免后台重定向循环、混合内容（HTTP/HTTPS 混用）等问题。
@@ -140,6 +161,8 @@ Nginx 配置中已预留 `/.well-known/acme-challenge/` 位置。申请 Let's En
 ## 常用命令
 
 ```bash
+docker compose up -d --build  # 构建（如有变化）并启动
+docker compose build          # 仅构建镜像
 docker compose up -d          # 启动
 docker compose down           # 停止并移除容器（数据卷保留）
 docker compose down -v        # 停止并移除容器与数据卷（⚠️ 清空数据）

@@ -18,7 +18,12 @@ services:
       start_period: 30s
 
   wordpress:
-    image: wordpress:latest
+    build:
+      context: .
+      args:
+        WORDPRESS_VERSION: ${WORDPRESS_VERSION:-7.1.5}
+        WP_LANG: ${WP_LANG:-zh_CN}
+    image: workpress-zh:${WORDPRESS_VERSION:-7.1.5}-${WP_LANG:-zh_CN}
     container_name: wordpress_app
     restart: unless-stopped
     depends_on:
@@ -35,6 +40,7 @@ services:
             $$_SERVER['HTTPS'] = 'on';
         }
         define('FORCE_SSL_ADMIN', true);
+        define('WPLANG', '${WP_LANG:-zh_CN}');
     volumes:
       - ./wp-data:/var/www/html
     healthcheck:
@@ -57,32 +63,3 @@ services:
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
       - ./certs:/etc/nginx/certs:ro
-
-  # 一次性任务：安装并启用简体中文语言包；执行完即退出，不影响常驻服务
-  wpcli:
-    image: wordpress:cli
-    container_name: wordpress_cli
-    depends_on:
-      wordpress:
-        condition: service_healthy
-    user: "33:33"            # www-data，保证写出的语言文件属主与站点一致
-    environment:
-      WP_CLI_CACHE_DIR: /tmp/wp-cli-cache
-      # wp-config.php 通过 getenv_docker() 在运行时读取数据库配置，必须一并提供
-      WORDPRESS_DB_HOST: db:3306
-      WORDPRESS_DB_NAME: ${DB_NAME:-wordpress}
-      WORDPRESS_DB_USER: ${DB_USER:-wordpress}
-      WORDPRESS_DB_PASSWORD: ${DB_PASSWORD:-wordpress_pass}
-    volumes:
-      - ./wp-data:/var/www/html
-    entrypoint: ["sh", "-c"]
-    # 直接下载官方语言包 zip（不依赖 api.wordpress.org，兼容受限网络），解压后激活
-    command:
-      - |
-        set -e
-        ver=$(php -r 'include "/var/www/html/wp-includes/version.php"; echo $$wp_version;')
-        echo "WordPress 版本: $${ver}"
-        curl -fsSL -o /tmp/zh_CN.zip "https://downloads.wordpress.org/translation/core/$${ver}/zh_CN.zip"
-        php -r '$$z = new ZipArchive; $$z->open("/tmp/zh_CN.zip"); $$z->extractTo("/var/www/html/wp-content/languages/"); $$z->close();'
-        wp option update WPLANG zh_CN || echo "站点尚未安装，安装向导中选择简体中文即可"
-    restart: "no"

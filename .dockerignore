@@ -1,0 +1,10 @@
+# 构建上下文排除项：项目根目录作为 context 时，避免把数据/证书/配置打进镜像
+wp-data/
+db-data/
+certs/
+nginx/
+.git/
+.env
+.env.example
+README.md
+*.md
