@@ -98,6 +98,8 @@ docker compose logs -f nginx
 2. **首次启动**：`./wp-data` 为空时，官方 entrypoint 自动把 `/usr/src/wordpress` 复制进数据卷（`--owner www-data`），语言包随之进入 `wp-content/languages`。
 3. **激活**：`WORDPRESS_CONFIG_EXTRA` 写入 `define('WPLANG', 'zh_CN')`（取自 `WP_LANG`）。
 
+> 若把 `WP_LANG` 设为 `en_US`：英文是源语言，官方没有英文语言包（下载会 404），因此镜像会自动改为预置 `zh_CN` 包——站点语言仍是英文，但后台可随时切换成中文，无需重建镜像。
+
 > 官方镜像声明了 `VOLUME /var/www/html`，在其下直接 `COPY` 文件会被丢弃，且 bind mount 会遮蔽镜像内容——所以语言包必须放在 `/usr/src/wordpress`（官方 entrypoint 唯一会搬运的目录）。
 >
 > **已有数据卷不会自动补语言包**（官方只在首次初始化时复制）。若 `./wp-data` 初始化时镜像还没内置语言包，在宿主机手动补一次即可：
