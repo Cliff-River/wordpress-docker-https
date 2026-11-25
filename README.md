@@ -1,6 +1,6 @@
 # WordPress + Nginx + MariaDB（Docker Compose，HTTPS 自签名证书）
 
-基于 Docker Compose 一键部署的 WordPress 站点，前置 Nginx 反向代理，**默认启用 HTTPS（自签名证书）**，并将 HTTP 80 端口自动 301 跳转到 HTTPS。
+基于 Docker Compose 一键部署的 WordPress 站点：Nginx 负责 TLS 终止与静态资源直出，PHP 由 `wordpress:<版本>-fpm` 容器通过 FastCGI 执行（不使用 Apache）。**默认启用 HTTPS（自签名证书）**，并将 HTTP 80 端口自动 301 跳转到 HTTPS。
 
 ## 目录结构
 
@@ -14,7 +14,7 @@
 ├── .gitignore
 ├── generate-certs.sh       # 生成自签名 TLS 证书
 ├── nginx/
-│   └── default.conf        # Nginx 配置（80->443 跳转 + 443 SSL 反代）
+│   └── default.conf        # Nginx 配置（80->443 跳转、443 TLS、静态直出 + FastCGI）
 └── certs/                  # 证书目录（已生成，密钥已被 .gitignore 忽略）
     ├── nginx.crt
     └── nginx.key
@@ -70,7 +70,7 @@ CERT_DAYS=825 ./generate-certs.sh
 docker compose up -d --build
 ```
 
-首次会基于根目录的 [Dockerfile](Dockerfile) 构建镜像：按 `WORDPRESS_VERSION` 拉取官方镜像，并在构建阶段把 `WP_LANG` 对应的语言包下载进 `/usr/src/wordpress/wp-content/languages`。构建上下文为项目根目录，已通过 `.dockerignore` 排除 `wp-data/`、`db-data/`、`certs/` 等。不修改官方 ENTRYPOINT——首次启动（`./wp-data` 为空）时官方 entrypoint 会把 `/usr/src/wordpress` 完整复制进数据卷，语言包随之生效并自动归属 `www-data`。
+首次会基于根目录的 [Dockerfile](Dockerfile) 构建镜像：按 `WORDPRESS_VERSION` 拉取官方 **`wordpress:<版本>-fpm`** 镜像，并在构建阶段把 `WP_LANG` 对应的语言包下载进 `/usr/src/wordpress/wp-content/languages`。构建上下文为项目根目录，已通过 `.dockerignore` 排除 `wp-data/`、`db-data/`、`certs/` 等。不修改官方 ENTRYPOINT——首次启动（`./wp-data` 为空）时官方 entrypoint 会把 `/usr/src/wordpress` 完整复制进数据卷，语言包随之生效并自动归属 `www-data`。
 
 > 修改 Dockerfile 或更换 `WP_LANG` / `WORDPRESS_VERSION` 后，需要重新构建：`docker compose up -d --build`。
 > 升级 WordPress 版本：把 `.env` 里的 `WORDPRESS_VERSION` 改成新版本后重新构建，语言包会自动匹配新版本。
@@ -133,21 +133,26 @@ docker compose logs -f nginx
    docker compose exec nginx nginx -s reload
    ```
 
-## 反向代理 HTTPS 与 WordPress
+## HTTPS 与 WordPress（FastCGI 模式）
 
-Nginx 通过 `X-Forwarded-Proto: https` 头告知 WordPress 请求来自 HTTPS。`docker-compose.yml` 中的 `WORDPRESS_CONFIG_EXTRA` 会自动向 `wp-config.php` 注入：
+Nginx 不再通过 HTTP 反向代理转发，而是用 FastCGI 直接调用 php-fpm。HTTPS 信息由 [nginx/default.conf](nginx/default.conf) 的 PHP location 显式传递：
+
+```nginx
+fastcgi_param HTTPS on;
+```
+
+因此 PHP 侧 `$_SERVER['HTTPS'] = 'on'`，WordPress 会按 HTTPS 生成链接、跳转和静态资源地址，不会出现混合内容或重定向循环。
+
+`docker-compose.yml` 中的 `WORDPRESS_CONFIG_EXTRA` 会向 `wp-config.php` 注入：
 
 ```php
-if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {
-    $_SERVER['HTTPS'] = 'on';
-}
 define('FORCE_SSL_ADMIN', true);
 define('WPLANG', 'zh_CN');
 ```
 
-这样可避免后台重定向循环、混合内容（HTTP/HTTPS 混用）等问题。
+`FORCE_SSL_ADMIN` 强制后台走 HTTPS，`WPLANG` 固定站点语言。
 
-> 注意：compose 中写为 `$$_SERVER` 是为了**转义 `$`**，防止 Docker Compose 把 `$_SERVER` 当成变量插值掉；运行到容器内会还原为 `$_SERVER`。
+> **静态资源与重写**：图片/CSS/JS 由 Nginx 直接从只读挂载的 `./wp-data` 返回（带 30 天缓存），只有 `.php` 请求才转给 php-fpm。Apache 版依赖的 `.htaccess` 在此模式下不再生效，固定链接改由 `try_files $uri $uri/ /index.php?$args` 处理。
 
 如果站点此前是以 HTTP 安装的，切换 HTTPS 后还需在 WordPress 设置里把“WordPress 地址 / 站点地址”改为 `https://`，或在 `wp-config.php` 中固定：
 

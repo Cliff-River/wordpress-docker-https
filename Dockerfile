@@ -1,6 +1,6 @@
-# 基于官方镜像，预置中文语言包
+# 基于官方镜像（php-fpm 版），预置中文语言包
 ARG WORDPRESS_VERSION=7.1.5
-FROM wordpress:${WORDPRESS_VERSION}
+FROM wordpress:${WORDPRESS_VERSION}-fpm
 
 # 语言代码：zh_CN / zh_TW / ja / ...
 ARG WP_LANG=zh_CN
