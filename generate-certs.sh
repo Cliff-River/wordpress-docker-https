@@ -25,8 +25,12 @@ DAYS="${CERT_DAYS:-3650}"
 
 mkdir -p "$CERT_DIR"
 
-# 构造 SAN：始终包含域名 + 127.0.0.1，localhost 仅在不同时追加（避免重复）
-SAN="DNS:${SERVER_NAME}"
+# 构造 SAN：访问名（IP 用 IP: 前缀）+ localhost + 127.0.0.1，避免重复
+if [[ "$SERVER_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  SAN="IP:${SERVER_NAME}"
+else
+  SAN="DNS:${SERVER_NAME}"
+fi
 [[ "${SERVER_NAME}" != "localhost" ]] && SAN="${SAN},DNS:localhost"
 SAN="${SAN},IP:127.0.0.1"
 

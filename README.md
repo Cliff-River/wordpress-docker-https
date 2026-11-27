@@ -30,7 +30,7 @@
 | `DB_ROOT_PASSWORD` | `root_pass` | 数据库 root 密码（请修改） |
 | `HTTP_PORT` | `80` | 宿主机 HTTP 端口（仅用于跳转到 HTTPS） |
 | `HTTPS_PORT` | `443` | 宿主机 HTTPS 端口 |
-| `SERVER_NAME` | `localhost` | 自签名证书的域名，运行 `generate-certs.sh` 时读取 |
+| `SERVER_NAME` | `localhost` | 自签名证书的域名或 IP，运行 `generate-certs.sh` 时读取（IP 会自动写成 IP SAN） |
 | `WORDPRESS_VERSION` | `7.1.5` | WordPress 基础镜像版本（构建镜像时使用） |
 | `WP_LANG` | `zh_CN` | 站点语言，语言包在构建镜像时内置（`zh_TW`、`ja` 等） |
 
@@ -151,6 +151,28 @@ define('WPLANG', 'zh_CN');
 ```
 
 `FORCE_SSL_ADMIN` 强制后台走 HTTPS，`WPLANG` 固定站点语言。
+
+### 内网多地址访问
+
+站点地址不写死在数据库里，而是由 `wp-config.php` 按请求的 Host 动态生成：
+
+```php
+$wp_scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+$wp_host   = $_SERVER['HTTP_HOST'] ?? 'localhost';
+define('WP_HOME', $wp_scheme . '://' . $wp_host);
+define('WP_SITEURL', $wp_scheme . '://' . $wp_host);
+```
+
+因此无论用 `https://localhost`、`https://192.168.x.x` 还是域名访问，跳转和静态资源地址都会跟随当前访问地址，不会出现“后台跳到 `https://localhost` 被拒绝”的问题。
+
+> `WORDPRESS_CONFIG_EXTRA` 只在**首次生成** `wp-config.php` 时生效；已经生成过配置的部署需要直接修改 `wp-data/wp-config.php`（本仓库已完成）。
+
+自签名证书的 SAN 已包含局域网 IP、`DNS:localhost` 和 `IP:127.0.0.1`，用 IP 访问时证书名称是匹配的（自签名仍会有“不受信任”提示）。换地址后重新生成证书即可：
+
+```bash
+./generate-certs.sh 192.168.1.50        # 或你的域名
+docker compose exec nginx nginx -s reload
+```
 
 > **静态资源与重写**：图片/CSS/JS 由 Nginx 直接从只读挂载的 `./wp-data` 返回（带 30 天缓存），只有 `.php` 请求才转给 php-fpm。Apache 版依赖的 `.htaccess` 在此模式下不再生效，固定链接改由 `try_files $uri $uri/ /index.php?$args` 处理。
 
